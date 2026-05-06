@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>사진 기반 블로그 포스팅 생성기</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <section class="lock-screen" id="lockScreen">
+      <form class="lock-box" id="lockForm">
+        <p class="eyebrow">Private</p>
+        <h1>비밀번호 입력</h1>
+        <label class="field">
+          <span>패스워드</span>
+          <input id="passwordInput" type="password" autocomplete="current-password" placeholder="패스워드 입력" />
+        </label>
+        <button class="primary wide" type="submit">입장</button>
+        <p class="lock-error" id="lockError"></p>
+      </form>
+    </section>
+
+    <main class="app">
+      <header class="header">
+        <h1>블로그 포스팅 생성기</h1>
+      </header>
+
+      <form id="postForm" class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Input</p>
+            <h2>포스팅 정보</h2>
+          </div>
+          <button id="resetButton" class="ghost" type="button">초기화</button>
+        </div>
+
+          <label class="field">
+            <span>카테고리</span>
+            <select id="category" name="category">
+              <option value="product">물건추천</option>
+              <option value="restaurant">맛집추천</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>글 종류</span>
+            <select id="postType" name="postType">
+              <option value="information">정보형</option>
+              <option value="recommendation">추천형</option>
+              <option value="review">후기형</option>
+              <option value="comparison">비교형</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>주제</span>
+            <input id="topic" name="topic" type="text" placeholder="예: 다이소 리들샷 앰플 추천, 성수동 고기 맛집" required />
+          </label>
+
+          <label class="field">
+            <span>대표 키워드</span>
+            <input id="keywords" name="keywords" type="text" placeholder="예: 다이소 리들샷, 성수 맛집, 앰플 추천" />
+          </label>
+
+          <label class="toggle-field">
+            <input id="latestSearch" name="latestSearch" type="checkbox" />
+            <span>
+              최신 정보 검색 반영
+              <small>켜면 오늘 날짜 기준으로 최근 정보가 필요한 부분을 검색해 반영합니다.</small>
+            </span>
+          </label>
+
+          <label class="field">
+            <span>넣고 싶은 메모</span>
+            <textarea id="memo" name="memo" placeholder="예: 가브리살 보쌈, 칼국수 서비스 / 3일에 한 번 사용, 2mL x 8ea, 5000원"></textarea>
+          </label>
+
+        <div class="split single">
+          <label class="field">
+            <span>글자 수</span>
+            <select id="length" name="length">
+              <option value="1500">1500자</option>
+              <option value="2000">2000자</option>
+            </select>
+          </label>
+        </div>
+
+        <section class="upload-box" id="dropZone">
+          <input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple />
+          <div class="upload-inner">
+            <div class="plus" aria-hidden="true">+</div>
+            <h2>사진을 올려주세요</h2>
+            <p>jpg, png, webp만 가능하며 최대 20장까지 업로드됩니다.</p>
+            <button id="pickButton" class="primary" type="button">사진 선택</button>
+          </div>
+        </section>
+
+        <p id="statusText" class="status">아직 업로드된 사진이 없습니다.</p>
+        <section id="previewGrid" class="preview-grid" aria-label="업로드된 사진 미리보기"></section>
+
+        <button id="generateButton" class="primary wide" type="submit">블로그 포스팅 생성</button>
+      </form>
+
+      <section class="panel output-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Output</p>
+            <h2>생성 결과</h2>
+          </div>
+          <button id="copyButton" class="ghost" type="button">복사</button>
+        </div>
+        <textarea id="output" spellcheck="false" placeholder="사진과 정보를 입력한 뒤 생성 버튼을 눌러주세요."></textarea>
+      </section>
+    </main>
+
+    <template id="previewTemplate">
+      <article class="preview-card">
+        <span class="order-badge"></span>
+        <img alt="" />
+        <button type="button" aria-label="사진 삭제">×</button>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
