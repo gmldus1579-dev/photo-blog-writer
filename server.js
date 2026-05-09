@@ -4,12 +4,16 @@ dotenv.config();
 const express = require("express");
 const multer = require("multer");
 const path = require("node:path");
+const fs = require("node:fs");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const REQUEST_TIMEOUT_MS = 120000;
 const MAX_FILE_SIZE = 3 * 1024 * 1024;
+const jobsDir = path.join(__dirname, ".jobs");
 const jobs = new Map();
+
+fs.mkdirSync(jobsDir, { recursive: true });
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -45,7 +49,7 @@ app.post("/api/generate", (req, res) => {
       logUploadSummary(requestId, req.files);
 
       const jobId = createRequestId();
-      jobs.set(jobId, {
+      setJob(jobId, {
         status: "pending",
         result: "",
         error: "",
@@ -74,10 +78,12 @@ app.post("/api/generate", (req, res) => {
 });
 
 app.get("/api/jobs/:jobId", (req, res) => {
-  const job = jobs.get(req.params.jobId);
+  const job = getJob(req.params.jobId);
 
   if (!job) {
-    res.status(404).json({ error: "작업을 찾을 수 없습니다." });
+    res.status(404).json({
+      error: "작업을 찾을 수 없습니다. 서버가 중간에 재시작됐을 수 있으니 다시 생성해주세요.",
+    });
     return;
   }
 
@@ -105,10 +111,11 @@ process.on("unhandledRejection", (error) => {
 });
 
 async function runGenerationJob(jobId, payload) {
-  const job = jobs.get(jobId);
+  const job = getJob(jobId);
   if (!job) return;
 
   job.status = "running";
+  setJob(jobId, job);
   console.log(`[${jobId}] background generation started`);
 
   try {
@@ -119,10 +126,12 @@ async function runGenerationJob(jobId, payload) {
 
     job.status = "done";
     job.result = result;
+    setJob(jobId, job);
     console.log(`[${jobId}] background generation completed`);
   } catch (error) {
     job.status = "error";
     job.error = error.message || "블로그 포스팅 생성 중 문제가 발생했습니다.";
+    setJob(jobId, job);
     console.error(`[${jobId}] background generation failed:`, error);
   }
 }
@@ -305,9 +314,15 @@ ${webSearchPrompt(useWebSearch)}
 - 영어 감탄 표현이나 영어 형용사를 섞지 마. appetizing, nice, good 같은 영어 표현 금지.
 - 고기나 음식 묘사는 "금방 익어서 바로 먹기 좋았어요", "생각보다 양이 괜찮았어요", "간이 세지 않아서 먹기 편했어요"처럼 일상적인 표현으로 써.
 - 실제 네이버 후기처럼 짧고 담백하게 써. 예를 들면 "양념이 과하게 달지 않았어요", "두께도 적당했어요", "밥이랑 먹기 좋았어요", "생각보다 사람이 많았어요", "셀프바가 있어서 편했어요", "배부르게 먹고 왔어요" 같은 말투를 우선해.
+- 예시 톤: "셀프바에 채소 종류가 꽤 많더라구요. 양파랑 청양고추 많이 가져와서 같이 먹었는데 조합 괜찮았어요."
 - "대박", "오", "ㅎㅎ", "딱 좋더라구요", "제 스타일이었어요", "편하게 먹을 수 있었어요"처럼 자연스러운 생활 표현은 상황에 맞으면 조금 섞어도 돼.
 - 단, 과하게 귀엽거나 광고처럼 보이는 말투로 몰아가지 마.
 - 광고 문구처럼 과장하지 않기.
+- 광고체/AI체 금지.
+- 설명문처럼 쓰지 말고 경험담처럼 작성해.
+- 친구에게 이야기하듯 자연스럽게 써.
+- 억지 감정 표현 금지.
+- 실제 사람이 쓰는 말투를 우선해.
 - 같은 표현 반복하지 않기.
 - 문장 끝은 주로 "~했어요", "~였어요", "~더라고요", "~좋았어요"를 자연스럽게 사용해.
 - 너무 문학적이거나 감성적인 표현은 줄여.
@@ -325,7 +340,8 @@ ${webSearchPrompt(useWebSearch)}
 - 단, 사진이나 메모에 전혀 근거가 없으면 너무 구체적인 사실처럼 지어내지 말고 "이럴 때 추가로 시키기 좋겠다", "같이 간 사람이 좋아할 만했다" 정도로 자연스럽게 완화해.
 - "최고였다", "감동이었다", "환상적이었다" 같은 과장 표현은 최소화해.
 - 아래 표현은 사용하지 마:
-  풍미, 감동, 입안 가득, 최고의 조화, 특별한 경험, 행복한 시간, 완벽한 식감, 웅장하게 등장, 기대감이 커졌어요, 혀가 돌게, 군침이 돌게, 사르르, 녹아내리는, 녹아내릴 것 같았어요, 황금빛, appetizing
+  풍미, 감동, 입안 가득, 최고의 조화, 특별한 경험, 행복한 시간, 완벽한 식감, 웅장하게 등장, 기대감이 커졌어요, 혀가 돌게, 군침이 돌게, 사르르, 녹아내리는, 녹아내릴 것 같았어요, 황금빛, appetizing, 우연히 방문하게 된, 매력적이었어요, 뿌듯했어요, 다양하게, 각종, 가지런히, 취향에 맞게
+- "~할 수 있었어요" 문장 패턴을 반복하지 마. 꼭 필요할 때만 1회 이하로 사용해.
 - 사용자가 메모에 붙여넣은 "AI 활용 설정", "사진 설명을 입력하세요", "출처 입력" 같은 자동 문구는 무시해.
 - 사진 번호는 반드시 사용하되, 여러 사진을 각각 따로 설명하는 독립 리뷰처럼 쓰지 말고 하나의 실제 방문 경험으로 자연스럽게 이어줘.
 - 사진 순서를 참고해서 1 → 2 → 3 흐름이 자연스럽게 이어지게 작성해. 맛집추천이면 입장 → 주문 → 먹는 과정 → 분위기 → 마무리, 물건추천이면 제품 발견/확인 → 전면 패키지 → 구성/가격 → 사용법/주의사항 → 추천 대상/마무리 흐름을 우선해.
@@ -485,6 +501,31 @@ function ensureApiKey() {
 
 function createRequestId() {
   return Math.random().toString(36).slice(2, 8);
+}
+
+function getJob(jobId) {
+  if (jobs.has(jobId)) return jobs.get(jobId);
+
+  const filePath = getJobPath(jobId);
+  if (!fs.existsSync(filePath)) return null;
+
+  try {
+    const job = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    jobs.set(jobId, job);
+    return job;
+  } catch (error) {
+    console.error(`[${jobId}] failed to read job file:`, error);
+    return null;
+  }
+}
+
+function setJob(jobId, job) {
+  jobs.set(jobId, job);
+  fs.writeFileSync(getJobPath(jobId), JSON.stringify(job), "utf8");
+}
+
+function getJobPath(jobId) {
+  return path.join(jobsDir, `${jobId}.json`);
 }
 
 function logUploadSummary(requestId, files) {
