@@ -7,6 +7,7 @@ const path = require("node:path");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const REQUEST_TIMEOUT_MS = 120000;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -26,6 +27,9 @@ const upload = multer({
 app.use(express.static(__dirname));
 
 app.post("/api/generate", (req, res) => {
+  const requestId = createRequestId();
+  console.log(`[${requestId}] /api/generate request started`);
+
   upload.array("images", 20)(req, res, async (uploadError) => {
     try {
       if (uploadError) {
@@ -36,14 +40,18 @@ app.post("/api/generate", (req, res) => {
 
       ensureApiKey();
       validateRequest(req);
+      logUploadSummary(requestId, req.files);
 
       const result = await generateBlogPost({
         fields: req.body,
         files: req.files,
+        requestId,
       });
 
+      console.log(`[${requestId}] request completed`);
       res.json({ result });
     } catch (error) {
+      console.error(`[${requestId}] request failed:`, error);
       res.status(error.status || 500).json({
         error: error.message || "블로그 포스팅 생성 중 문제가 발생했습니다.",
       });
@@ -60,18 +68,34 @@ app.listen(port, () => {
   console.log(`Photo blog writer running at http://localhost:${port}`);
 });
 
-async function generateBlogPost({ fields, files }) {
+process.on("uncaughtException", (error) => {
+  console.error("[fatal] uncaughtException:", error);
+});
+
+process.on("unhandledRejection", (error) => {
+  console.error("[fatal] unhandledRejection:", error);
+});
+
+async function generateBlogPost({ fields, files, requestId }) {
   const useWebSearch = shouldUseWebSearch(fields);
+  console.log(`[${requestId}] web search enabled: ${useWebSearch}`);
+
   const content = [
     {
       type: "input_text",
       text: buildPrompt(fields, files.length, useWebSearch),
     },
-    ...files.map((file) => ({
-      type: "input_image",
-      image_url: toDataUrl(file),
-      detail: "auto",
-    })),
+    ...files.flatMap((file, index) => [
+      {
+        type: "input_text",
+        text: `${index + 1}번 사진입니다. [본문]의 ${index + 1}번 섹션은 반드시 이 이미지에 보이는 대상과 내용만 중심으로 작성하세요.`,
+      },
+      {
+        type: "input_image",
+        image_url: toDataUrl(file),
+        detail: "auto",
+      },
+    ]),
   ];
 
   const requestBody = {
@@ -90,6 +114,10 @@ async function generateBlogPost({ fields, files }) {
     requestBody.tool_choice = "auto";
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  console.log(`[${requestId}] sending request to OpenAI`);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -97,9 +125,12 @@ async function generateBlogPost({ fields, files }) {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify(requestBody),
+    signal: controller.signal,
   });
+  clearTimeout(timeout);
 
   const rawText = await response.text();
+  console.log(`[${requestId}] OpenAI status: ${response.status}, response bytes: ${Buffer.byteLength(rawText, "utf8")}`);
   const data = parseJsonResponse(rawText, response.status);
 
   if (!response.ok) {
@@ -119,6 +150,9 @@ function buildPrompt(fields, imageCount, useWebSearch) {
   const postType = normalizePostType(fields.postType);
   const length = ["1500", "2000"].includes(fields.length) ? fields.length : "1500";
   const requiredSections = Array.from({ length: imageCount }, (_, index) => index + 1).join(", ");
+  const minBodyChars = length === "2000" ? 1900 : 1400;
+  const maxBodyChars = length === "2000" ? 2200 : 1700;
+  const sentencesPerSection = imageCount >= 12 ? "2~3문장" : imageCount >= 8 ? "3~4문장" : "4~6문장";
   const bodyTemplate = Array.from(
     { length: imageCount },
     (_, index) => `${index + 1}\n${index === 0 ? "방문 시작 흐름" : "앞 번호에서 자연스럽게 이어지는 방문 경험"}`,
@@ -132,13 +166,30 @@ function buildPrompt(fields, imageCount, useWebSearch) {
     keywords,
     memo,
     length,
+    minBodyChars,
+    maxBodyChars,
+    sentencesPerSection,
     requiredSections,
     bodyTemplate,
     useWebSearch,
   });
 }
 
-function buildPromptByType({ postType, category, imageCount, topic, keywords, memo, length, requiredSections, bodyTemplate, useWebSearch }) {
+function buildPromptByType({
+  postType,
+  category,
+  imageCount,
+  topic,
+  keywords,
+  memo,
+  length,
+  minBodyChars,
+  maxBodyChars,
+  sentencesPerSection,
+  requiredSections,
+  bodyTemplate,
+  useWebSearch,
+}) {
   const guide = postTypeGuide(postType);
   const categoryGuide = categoryPromptGuide(category);
   const mainKeyword = keywords || topic;
@@ -155,6 +206,8 @@ function buildPromptByType({ postType, category, imageCount, topic, keywords, me
 - 메인 키워드: ${mainKeyword}
 - 사용자가 넣고 싶은 메모: ${memo || "없음"}
 - 목표 글자 수: 본문 기준 약 ${length}자
+- 본문 최소 글자 수: ${minBodyChars}자
+- 본문 권장 범위: ${minBodyChars}~${maxBodyChars}자
 - 말투: 담백하고 현실적인 네이버 블로그 말투
 
 [카테고리 방향]
@@ -168,6 +221,11 @@ ${webSearchPrompt(useWebSearch)}
 
 [반드시 먼저 내부적으로 할 일]
 - 카테고리에 맞춰 사진을 분석해.
+- 각 번호 섹션은 반드시 같은 번호의 이미지 내용과 일치해야 해.
+- 1번 이미지가 된장찌개라면 [본문] 1번은 된장찌개 중심으로 써. 고기, 볶음밥, 다른 메뉴 이야기를 1번의 중심으로 쓰면 안 돼.
+- 각 이미지에서 가장 크게 보이는 음식/제품/장면을 먼저 파악하고, 해당 번호 섹션의 중심 소재로 삼아.
+- 이미지에서 확인되지 않는 메뉴나 제품을 해당 번호의 중심 소재로 쓰지 마.
+- 여러 사진을 하나의 흐름으로 이어 쓰더라도, 각 번호 아래 내용은 그 번호 이미지와 어긋나면 안 돼.
 - 물건추천이면 제품명, 브랜드, 가격, 용량, 구성, 사용 주기, 사용 방법, 기능성 문구, 주의사항, 추천 대상, 아쉬운 점을 분석해.
 - 맛집추천이면 음식, 메뉴, 분위기, 공간감, 주문 흐름, 방문 포인트를 분석해.
 - 패키지나 라벨에 적힌 글자가 보이면 적극적으로 읽어서 반영해.
@@ -216,6 +274,7 @@ ${webSearchPrompt(useWebSearch)}
 - 사진 번호는 반드시 사용하되, 여러 사진을 각각 따로 설명하는 독립 리뷰처럼 쓰지 말고 하나의 실제 방문 경험으로 자연스럽게 이어줘.
 - 사진 순서를 참고해서 1 → 2 → 3 흐름이 자연스럽게 이어지게 작성해. 맛집추천이면 입장 → 주문 → 먹는 과정 → 분위기 → 마무리, 물건추천이면 제품 발견/확인 → 전면 패키지 → 구성/가격 → 사용법/주의사항 → 추천 대상/마무리 흐름을 우선해.
 - 각 번호마다 새로운 리뷰를 시작하지 말고, 앞 번호의 경험이 다음 번호로 자연스럽게 넘어가게 써.
+- 단, 자연스럽게 이어 쓰더라도 각 번호의 핵심 내용은 반드시 해당 번호 이미지에 보이는 음식/제품/장면이어야 해.
 - 전체 흐름은 서론, 본론, 결론처럼 자연스럽게 이어지게 작성해.
 - 음식 맛, 분위기, 공간감, 방문 느낌을 자연스럽게 연결해.
 - 사용자가 적은 메모는 자연스럽게 반영해.
@@ -226,8 +285,11 @@ ${webSearchPrompt(useWebSearch)}
 - 키워드를 억지로 반복하지 말고, 실제 사람이 검색 유입을 고려해 작성한 후기처럼 자연스럽게 녹여.
 - 대표 키워드와 주제 관련 SEO 키워드도 과하게 반복하지 말고 문맥에 맞게만 사용해.
 - [본문]만 기준으로 약 ${length}자에 맞춰 작성해. 제목 추천과 해시태그는 글자 수에 포함하지 마.
+- [본문]은 반드시 최소 ${minBodyChars}자 이상 작성해.
+- [본문]은 ${maxBodyChars}자를 크게 넘기지 마.
+- 각 번호 섹션은 너무 짧게 끝내지 말고, 번호마다 대략 ${sentencesPerSection} 정도로 작성해.
 - 1500자를 선택했다면 짧고 핵심적인 후기로, 2000자를 선택했다면 방문 흐름과 음식 평가를 조금 더 자세히 써.
-- 선택한 글자 수보다 너무 짧게 끝내지 마. 목표 글자 수의 90% 이상은 채워.
+- 선택한 글자 수보다 너무 짧게 끝내지 마. 1500자를 선택했는데 1000자 안팎으로 끝내면 안 돼.
 - 필요 이상으로 길게 쓰지 말고 목표 글자 수를 크게 넘기지 마.
 - 음식이 볶음밥이면 밥알, 간, 재료 조합을 평가하고, 고기면 결, 식감, 곁들임을 평가하는 식으로 음식명에 맞게 써.
 - 물건추천이면 실제 구매 확정 후기처럼 쓰지 말고, 패키지와 표기 기준으로 살펴본 추천/정보 글처럼 써. "구매했어요", "써봤어요"는 메모에 근거가 있을 때만 사용해.
@@ -363,6 +425,17 @@ function ensureApiKey() {
     error.status = 500;
     throw error;
   }
+}
+
+function createRequestId() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+function logUploadSummary(requestId, files) {
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  const totalMb = (totalBytes / 1024 / 1024).toFixed(2);
+  const sizes = files.map((file, index) => `${index + 1}:${(file.size / 1024 / 1024).toFixed(2)}MB`).join(", ");
+  console.log(`[${requestId}] files: ${files.length}, total: ${totalMb}MB, sizes: ${sizes}`);
 }
 
 function toDataUrl(file) {
