@@ -135,7 +135,7 @@ async function submitPost(event) {
       body: formData,
     });
 
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) {
       throw new Error(data.error || "포스팅 생성에 실패했습니다.");
     }
@@ -181,4 +181,20 @@ function setBusy(isBusy) {
 
 function setStatus(message) {
   statusText.textContent = message;
+}
+
+async function readJsonResponse(response) {
+  const text = await response.text();
+
+  if (!text) {
+    return { error: `서버가 빈 응답을 반환했습니다. 상태 코드: ${response.status}` };
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return {
+      error: `서버 응답을 읽지 못했습니다. 상태 코드: ${response.status}. 응답 일부: ${text.slice(0, 200)}`,
+    };
+  }
 }

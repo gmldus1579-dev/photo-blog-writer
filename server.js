@@ -99,7 +99,8 @@ async function generateBlogPost({ fields, files }) {
     body: JSON.stringify(requestBody),
   });
 
-  const data = await response.json();
+  const rawText = await response.text();
+  const data = parseJsonResponse(rawText, response.status);
 
   if (!response.ok) {
     const error = new Error(data.error?.message || "OpenAI API 요청에 실패했습니다.");
@@ -392,4 +393,21 @@ function extractOutputText(data) {
   }
 
   return text.trim();
+}
+
+function parseJsonResponse(rawText, status) {
+  if (!rawText) {
+    const error = new Error(`OpenAI API가 빈 응답을 반환했습니다. 상태 코드: ${status}`);
+    error.status = status || 502;
+    throw error;
+  }
+
+  try {
+    return JSON.parse(rawText);
+  } catch (error) {
+    const preview = rawText.slice(0, 300);
+    const wrapped = new Error(`OpenAI API 응답을 읽지 못했습니다. 상태 코드: ${status}. 응답 일부: ${preview}`);
+    wrapped.status = status || 502;
+    throw wrapped;
+  }
 }
