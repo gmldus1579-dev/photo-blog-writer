@@ -8,11 +8,12 @@ const path = require("node:path");
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const REQUEST_TIMEOUT_MS = 120000;
+const MAX_FILE_SIZE = 3 * 1024 * 1024;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     files: 20,
-    fileSize: 8 * 1024 * 1024,
+    fileSize: MAX_FILE_SIZE,
   },
   fileFilter: (req, file, cb) => {
     const allowed = ["image/jpeg", "image/png", "image/webp"];
@@ -63,10 +64,13 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.listen(port, () => {
+const httpServer = app.listen(port, () => {
   console.log(`OPENAI_API_KEY loaded: ${Boolean(process.env.OPENAI_API_KEY)}`);
   console.log(`Photo blog writer running at http://localhost:${port}`);
 });
+
+httpServer.requestTimeout = 5 * 60 * 1000;
+httpServer.headersTimeout = 5 * 60 * 1000;
 
 process.on("uncaughtException", (error) => {
   console.error("[fatal] uncaughtException:", error);

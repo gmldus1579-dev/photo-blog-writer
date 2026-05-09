@@ -198,7 +198,7 @@ function compressImage(file) {
     image.onload = () => {
       URL.revokeObjectURL(objectUrl);
 
-      const maxSide = 1200;
+      const maxSide = 900;
       const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
       const width = Math.max(1, Math.round(image.width * scale));
       const height = Math.max(1, Math.round(image.height * scale));
@@ -220,7 +220,7 @@ function compressImage(file) {
           resolve(new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }));
         },
         "image/jpeg",
-        0.78,
+        0.68,
       );
     };
 
