@@ -9,6 +9,7 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const REQUEST_TIMEOUT_MS = 120000;
 const MAX_FILE_SIZE = 3 * 1024 * 1024;
+const jobs = new Map();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -43,14 +44,26 @@ app.post("/api/generate", (req, res) => {
       validateRequest(req);
       logUploadSummary(requestId, req.files);
 
-      const result = await generateBlogPost({
-        fields: req.body,
-        files: req.files,
-        requestId,
+      const jobId = createRequestId();
+      jobs.set(jobId, {
+        status: "pending",
+        result: "",
+        error: "",
+        createdAt: Date.now(),
       });
 
-      console.log(`[${requestId}] request completed`);
-      res.json({ result });
+      res.json({ jobId });
+      console.log(`[${requestId}] queued job ${jobId}`);
+
+      runGenerationJob(jobId, {
+        fields: { ...req.body },
+        files: req.files.map((file) => ({
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          buffer: Buffer.from(file.buffer),
+        })),
+      });
     } catch (error) {
       console.error(`[${requestId}] request failed:`, error);
       res.status(error.status || 500).json({
@@ -58,6 +71,17 @@ app.post("/api/generate", (req, res) => {
       });
     }
   });
+});
+
+app.get("/api/jobs/:jobId", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+
+  if (!job) {
+    res.status(404).json({ error: "작업을 찾을 수 없습니다." });
+    return;
+  }
+
+  res.json(job);
 });
 
 app.get("*", (req, res) => {
@@ -79,6 +103,29 @@ process.on("uncaughtException", (error) => {
 process.on("unhandledRejection", (error) => {
   console.error("[fatal] unhandledRejection:", error);
 });
+
+async function runGenerationJob(jobId, payload) {
+  const job = jobs.get(jobId);
+  if (!job) return;
+
+  job.status = "running";
+  console.log(`[${jobId}] background generation started`);
+
+  try {
+    const result = await generateBlogPost({
+      ...payload,
+      requestId: jobId,
+    });
+
+    job.status = "done";
+    job.result = result;
+    console.log(`[${jobId}] background generation completed`);
+  } catch (error) {
+    job.status = "error";
+    job.error = error.message || "블로그 포스팅 생성 중 문제가 발생했습니다.";
+    console.error(`[${jobId}] background generation failed:`, error);
+  }
+}
 
 async function generateBlogPost({ fields, files, requestId }) {
   const useWebSearch = shouldUseWebSearch(fields);

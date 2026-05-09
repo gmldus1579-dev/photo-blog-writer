@@ -142,7 +142,13 @@ async function submitPost(event) {
       throw new Error(data.error || "포스팅 생성에 실패했습니다.");
     }
 
-    output.value = data.result;
+    if (!data.jobId) {
+      throw new Error("서버가 작업 ID를 반환하지 않았습니다.");
+    }
+
+    output.value = "서버에서 글을 생성하는 중입니다. 잠시만 기다려주세요...";
+    const result = await waitForJob(data.jobId);
+    output.value = result;
     setStatus("블로그 포스팅이 완성됐습니다.");
   } catch (error) {
     output.value = `문제가 발생했습니다.\n\n${error.message}`;
@@ -183,6 +189,37 @@ function setBusy(isBusy) {
 
 function setStatus(message) {
   statusText.textContent = message;
+}
+
+async function waitForJob(jobId) {
+  const maxAttempts = 120;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await delay(2000);
+
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+    const data = await readJsonResponse(response);
+
+    if (!response.ok) {
+      throw new Error(data.error || "작업 상태를 확인하지 못했습니다.");
+    }
+
+    if (data.status === "done") {
+      return data.result;
+    }
+
+    if (data.status === "error") {
+      throw new Error(data.error || "글 생성 중 문제가 발생했습니다.");
+    }
+
+    output.value = `서버에서 글을 생성하는 중입니다. 잠시만 기다려주세요...\n\n진행 상태: ${data.status}\n경과 시간: ${(attempt + 1) * 2}초`;
+  }
+
+  throw new Error("글 생성 시간이 너무 오래 걸립니다. 사진 수를 줄이거나 다시 시도해주세요.");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function compressImage(file) {
