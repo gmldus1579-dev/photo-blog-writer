@@ -70,7 +70,7 @@ async function generateBlogPost({ fields, files }) {
     ...files.map((file) => ({
       type: "input_image",
       image_url: toDataUrl(file),
-      detail: "high",
+      detail: "auto",
     })),
   ];
 

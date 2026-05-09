@@ -124,12 +124,14 @@ async function submitPost(event) {
   }
 
   const formData = new FormData(postForm);
-  selectedFiles.forEach((file) => formData.append("images", file));
 
   setBusy(true);
-  output.value = "사진을 분석하고 블로그 포스팅을 작성하는 중입니다...";
+  output.value = "사진을 정리하고 블로그 포스팅을 작성하는 중입니다...";
 
   try {
+    const compressedFiles = await Promise.all(selectedFiles.map(compressImage));
+    compressedFiles.forEach((file) => formData.append("images", file));
+
     const response = await fetch("/api/generate", {
       method: "POST",
       body: formData,
@@ -181,6 +183,54 @@ function setBusy(isBusy) {
 
 function setStatus(message) {
   statusText.textContent = message;
+}
+
+function compressImage(file) {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("image/")) {
+      resolve(file);
+      return;
+    }
+
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+
+      const maxSide = 1800;
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+      const width = Math.max(1, Math.round(image.width * scale));
+      const height = Math.max(1, Math.round(image.height * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0, width, height);
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file);
+            return;
+          }
+
+          resolve(new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }));
+        },
+        "image/jpeg",
+        0.86,
+      );
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(file);
+    };
+
+    image.src = objectUrl;
+  });
 }
 
 async function readJsonResponse(response) {
